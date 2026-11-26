@@ -322,11 +322,22 @@ no launch-path correctness bugs found.** Items to keep in mind:
      worker-thread pipeline compiles and the game's watchdog, hence the flakiness.)
   - Same class as the existing NVIDIA workaround `1ca1787d` (BaryCoord). `--shader-cache` WarmUp
     compiles ~150–330 pipelines fine; the culprit is a *new* pipeline built during the prologue.
-  - **Options to get past it:** (a) **try a different NVIDIA driver** (user's is 32.0.15.9636 — a
-    compiler bug here is version-specific; most practical). (b) Identify the offending pipeline (log the
-    shader hash right before each `vkCreate*Pipelines`, reproduce, read the last line in the crash log)
-    then add a SPIR-V emitter workaround — deep, per-shader. (c) Not fixable by `KYTY_SKIP_FAILED_SHADERS`
-    (that catches our translation via setjmp, not a hard AV inside the driver).
+  - **Update 2026-11-26 (driver 32.0.15.9636 → 32.0.16.2140):** the NVIDIA driver update **fixed the
+    `nvgpucomp64` compiler crash** — every post-update run is now the `0x8bd3a40` timing fatal, never the
+    driver AV. So two separate problems; one down.
+  - **Remaining = the `0x8bd3a40` timing watchdog.** Added a culprit logger (`KYTY_LOG_PIPELINE_COMPILE`
+    → `_Logs/last_pipeline_compile.txt`, commit pending). It showed the shader compiling at the crash is
+    a **different compute shader every run** (`0x16fb…`, `0x2a1b…`, `0xd18a…`) — so it's **not one bad
+    shader**; compute-pipeline compilation is simply still churning on worker threads when RAGE's watchdog
+    fires. **The shader precache does not fix it:** as the `.shaders` store warms (0→21→149 pipelines
+    loaded by WarmUp), the crash arrives *sooner* (106 s → 67 s), i.e. it's a **fixed prologue
+    progress-point watchdog**, not a cumulative boot deadline — warming just reaches the slow prologue
+    operation faster. The operation at that point is too slow under the emulator and trips the watchdog.
+  - **Next options:** (a) determine whether prologue draws **block on pipeline compile** (frame stall →
+    watchdog) and make them non-blocking/skip-until-ready (`GetGraphicsPipeline(..., wait=false)` path) —
+    most promising emulator-side fix. (b) RE the watchdog threshold in eboot and neutralize/relax it
+    (patch the fatal path at `eboot+0xe0e75e0`/`0x8bd3a40`) — risky. (c) Slow/pause the guest clock
+    during heavy compile so the measured delta stays in-bounds — hacky.
 
 #### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
