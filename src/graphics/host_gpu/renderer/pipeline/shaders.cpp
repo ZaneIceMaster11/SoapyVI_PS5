@@ -1,6 +1,7 @@
 #include "common/compilePause.h"
 #include "common/assert.h"
 #include "common/common.h"
+#include "common/logging/log.h"
 #include "common/profiler.h"
 #include "gpu_blit_shaders/gpu_mesh_indirect_spv.h"
 #include "graphics/guest_gpu/gpu_defs.h"
@@ -20,10 +21,32 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstdio>
+#include <cstdlib>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace Libs::Graphics {
+
+// KYTY_LOG_PIPELINE_COMPILE: just before each host pipeline compile — i.e. before the GPU driver's
+// own shader compiler runs inside vkCreate*Pipelines — record the shader identity to
+// _Logs/last_pipeline_compile.txt, overwritten and flushed each time. If the driver's compiler then
+// crashes mid-compile (e.g. nvgpucomp64.dll on NVIDIA), the file still names the offending shader
+// (by guest shader_hash) so it can be dumped with KYTY_SHADER_CAPSULES and worked around.
+static void LogPipelineCompile(const std::string& detail) {
+	static const bool on = std::getenv("KYTY_LOG_PIPELINE_COMPILE") != nullptr;
+	if (!on) {
+		return;
+	}
+	if (std::FILE* f = std::fopen("_Logs/last_pipeline_compile.txt", "w"); f != nullptr) {
+		std::fwrite(detail.data(), 1, detail.size(), f);
+		std::fputc('\n', f);
+		std::fflush(f);
+		std::fclose(f);
+	}
+	LOGF("PIPELINE COMPILE: %s\n", detail.c_str());
+}
 
 static vk::BlendFactor GetBlendFactor(uint32_t factor) {
 	switch (static_cast<Prospero::BlendFactor>(factor)) {
@@ -429,6 +452,19 @@ vk::Pipeline CreateHostPipeline(GraphicContext& graphics, vk::PipelineLayout lay
 	pipeline_info.pDynamicState       = &dynamic_state;
 	pipeline_info.layout              = layout;
 
+	{
+		std::string d = "graphics";
+		for (const auto* s: stages) {
+			if (s != nullptr) {
+				char buf[48];
+				std::snprintf(buf, sizeof(buf), " stage%d=0x%016llx", static_cast<int>(s->info.stage),
+				              static_cast<unsigned long long>(s->info.shader_hash));
+				d += buf;
+			}
+		}
+		LogPipelineCompile(d);
+	}
+
 	vk::Pipeline pipeline;
 	Common::CompilePause::Scope compile_pause;
 	const auto   result = graphics.device.createGraphicsPipelines(driver_cache, 1, &pipeline_info,
@@ -461,6 +497,14 @@ vk::Pipeline CreateHostPipeline(GraphicContext& graphics, vk::PipelineLayout lay
 	}
 	info.stage  = comp_shader_stage_info;
 	info.layout = layout;
+
+	{
+		char buf[48];
+		std::snprintf(buf, sizeof(buf), "compute stage%d=0x%016llx",
+		              static_cast<int>(module.info.stage),
+		              static_cast<unsigned long long>(module.info.shader_hash));
+		LogPipelineCompile(buf);
+	}
 
 	vk::Pipeline pipeline;
 	Common::CompilePause::Scope compile_pause;
