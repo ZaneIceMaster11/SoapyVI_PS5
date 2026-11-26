@@ -639,13 +639,17 @@ static bool IsReadableRange(uint64_t addr, uint64_t size) {
 
 void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo& info) {
 	// Fatal, best-effort context: do not take m_mutex — the faulting thread may already hold it.
-	char thread_name[64] = "(host thread)";
+	char  thread_name[64] = "(host thread)";
+	void* fault_entry     = nullptr;
 	if (auto* self = Libs::LibKernel::PthreadSelfOrNull(); self != nullptr) {
 		// PthreadGetname can succeed (returns 0) yet leave an empty name for guest threads that
 		// were never named — don't let that render as a blank line in the report.
 		if (Libs::LibKernel::PthreadGetname(self, thread_name) != 0 || thread_name[0] == '\0') {
 			std::snprintf(thread_name, sizeof(thread_name), "(unnamed guest thread)");
 		}
+		// The thread's start routine identifies an unnamed worker by correlating with the
+		// "pthread create ... entry=..." trace in the session log.
+		fault_entry = Libs::LibKernel::PthreadGetEntry(self);
 	}
 
 	// Native OS thread id of the faulting thread (the handler runs on it) — lets a crash be
@@ -684,6 +688,11 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 	};
 	if (auto d = describe(info.exception_address); !d.empty()) {
 		r += fmt::format("pc -> {}\n", d);
+	}
+	if (fault_entry != nullptr) {
+		const auto entry = reinterpret_cast<uint64_t>(fault_entry);
+		auto       d     = describe(entry);
+		r += fmt::format("thread entry: 0x{:016x}{}\n", entry, d.empty() ? "" : fmt::format("  {}", d));
 	}
 
 	if (IsReadableRange(info.exception_address - 48, 96)) {

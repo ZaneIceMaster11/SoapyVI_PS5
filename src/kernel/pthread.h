@@ -106,6 +106,8 @@ int KYTY_SYSV_ABI     PthreadSetaffinity(Pthread thread, KernelCpumask mask);
 void KYTY_SYSV_ABI    PthreadExit(void* value);
 int KYTY_SYSV_ABI     PthreadEqual(Pthread thread1, Pthread thread2);
 int KYTY_SYSV_ABI     PthreadGetname(Pthread thread, char* name);
+// The thread's guest start routine (null for a null/host thread) — for crash diagnostics.
+void*                 PthreadGetEntry(Pthread thread);
 int KYTY_SYSV_ABI     PthreadRename(Pthread thread, const char* name);
 void KYTY_SYSV_ABI    PthreadYield();
 int KYTY_SYSV_ABI     PthreadGetthreadid();

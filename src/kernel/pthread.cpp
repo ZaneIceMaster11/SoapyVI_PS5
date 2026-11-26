@@ -7,6 +7,7 @@
 #include "common/fpEnv.h"
 #include "common/hostException.h"
 #include "common/logging/log.h"
+#include "common/logging/logCategory.h"
 #include "common/singleton.h"
 #include "common/stringUtils.h"
 #include "common/threads.h"
@@ -3037,6 +3038,10 @@ Pthread PthreadSelfOrNull() {
 	return g_pthread_self;
 }
 
+void* PthreadGetEntry(Pthread thread) {
+	return thread != nullptr ? reinterpret_cast<void*>(thread->entry) : nullptr;
+}
+
 Pthread PthreadSwapSelfForSignal(Pthread thread) {
 	auto* previous = g_pthread_self;
 	g_pthread_self = thread;
@@ -3273,6 +3278,20 @@ int KYTY_SYSV_ABI PthreadCreate(Pthread* thread, const PthreadAttr* attr,
 
 	LOGF("\tthread create: %s, id = %d, %d\n", created_thread->name.c_str(),
 	     created_thread->unique_id, result);
+
+	// Structured trace: each guest thread's entry point (for the main program this is
+	// eboot base + offset) plus its name and creator — lets a crash be correlated to the
+	// thread body that spawned it (e.g. identifying an otherwise-unnamed worker by its entry).
+	{
+		auto*       creator      = PthreadSelfOrNull();
+		const char* creator_name = (creator != nullptr ? creator->name.c_str() : "(host)");
+		KLOGI(::Log::Category::Kernel,
+		      "pthread create id=%d name='%s' entry=0x%llx arg=0x%llx creator='%s' result=%d",
+		      created_thread->guest.thread_id, created_thread->name.c_str(),
+		      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(entry)),
+		      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(arg)), creator_name,
+		      result);
+	}
 
 	PthreadAttrDbgPrint(&created_thread->attr);
 	if (result != 0) {
