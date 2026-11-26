@@ -670,6 +670,22 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 	                 "r12={:016x} r13={:016x} r14={:016x} r15={:016x}\n",
 	                 info.rax, info.rbx, info.rcx, info.rdx, info.rsi, info.rdi, info.rbp, info.rsp,
 	                 info.r8, info.r9, info.r10, info.r11, info.r12, info.r13, info.r14, info.r15);
+
+	// Resolve a guest address to "<module>+0x<offset>" when it lands inside a loaded module, else "".
+	auto describe = [this](uint64_t addr) -> std::string {
+		for (const auto* program: m_programs) {
+			if (program != nullptr && addr >= program->base_vaddr &&
+			    addr < program->base_vaddr + program->base_size) {
+				return fmt::format("{}+0x{:x}", program->file_name.filename().string(),
+				                   addr - program->base_vaddr);
+			}
+		}
+		return {};
+	};
+	if (auto d = describe(info.exception_address); !d.empty()) {
+		r += fmt::format("pc -> {}\n", d);
+	}
+
 	if (IsReadableRange(info.exception_address - 48, 96)) {
 		const auto* code = reinterpret_cast<const uint8_t*>(info.exception_address - 48);
 		r += "code (pc-48 .. pc+48, fault at byte 48):";
@@ -678,13 +694,23 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 		}
 		r += "\n";
 	}
-	if (IsReadableRange(info.rsp, 32 * sizeof(uint64_t))) {
-		const auto* stack = reinterpret_cast<const uint64_t*>(info.rsp);
-		r += "stack:";
-		for (int i = 0; i < 32; i++) {
-			r += fmt::format("{}{:016x}", (i % 4 == 0) ? "\n " : " ", stack[i]);
+	// Per-qword stack dump, each slot probed on its own so a single unreadable page cannot blank the
+	// whole section. Slots that resolve into a loaded module are annotated: the faulting code may omit
+	// a frame pointer (RAGE does), so this is a more reliable backtrace than walking the rbp chain —
+	// and for a prologue-less trap thunk the slot at +0x000 is the immediate caller's return address.
+	r += "stack (rsp+off: value  [module+offset]):\n";
+	for (int i = 0; i < 40; i++) {
+		const uint64_t slot = info.rsp + static_cast<uint64_t>(i) * sizeof(uint64_t);
+		if (!IsReadableRange(slot, sizeof(uint64_t))) {
+			r += fmt::format("  +0x{:03x}: <unreadable>\n", i * 8);
+			continue;
 		}
-		r += "\n";
+		const uint64_t value = *reinterpret_cast<const uint64_t*>(slot);
+		if (auto d = describe(value); !d.empty()) {
+			r += fmt::format("  +0x{:03x}: {:016x}  {}\n", i * 8, value, d);
+		} else {
+			r += fmt::format("  +0x{:03x}: {:016x}\n", i * 8, value);
+		}
 	}
 	r += "modules (base / size / name; * contains pc):\n";
 	for (const auto* program: m_programs) {
