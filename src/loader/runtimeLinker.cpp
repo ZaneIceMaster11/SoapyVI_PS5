@@ -764,6 +764,15 @@ bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exception_
 			Common::DebugCounters::Add(Common::DebugCounters::Counter::GpuFaults);
 			return true;
 		}
+		// A guest range briefly unmapped while the emulator replaced its mapping: wait until it
+		// is mapped again and retry the access. A retry that then hits GPU tracking comes back
+		// here and is resolved above.
+		const auto transient =
+		    Libs::LibKernel::Memory::WaitForTransientUnmap(info->access_violation_vaddr);
+		if (transient != 0 && Libs::LibKernel::Memory::RetryTransientUnmapFault(
+		                          info->access_violation_vaddr, transient)) {
+			return true;
+		}
 	}
 	// Write a full crash report (standalone file + structured log + console) before terminating.
 	Common::Singleton<RuntimeLinker>::Instance()->WriteCrashReport(*info);

@@ -4,6 +4,7 @@
 #include "graphics/shader/recompiler/ir/ShaderIR.h"
 
 #include <algorithm>
+#include <memory>
 #include <span>
 
 namespace Libs::Graphics::ShaderRecompiler::IR {
@@ -37,6 +38,23 @@ protected:
 	~ImageHeapSource() = default;
 };
 
+struct HeapRowView {
+	uint32_t              first = UINT32_MAX; // Report bit of row 0.
+	std::vector<uint32_t> rows;               // Rows the GPU reported.
+};
+
+class HeapRowSource {
+public:
+	// The reported rows of a root that selects among count rows. False when the root cannot report.
+	virtual bool Acquire(uint64_t shader, uint32_t source, uint64_t count, HeapRowView& view) = 0;
+	// A reported row that cannot be bound.
+	virtual void Reject(uint64_t shader, uint32_t source, uint32_t row, const DescriptorValue& value,
+	                    std::string_view reason) = 0;
+
+protected:
+	~HeapRowSource() = default;
+};
+
 struct SrtRuntime {
 	std::span<const uint32_t> user_data;
 	uint64_t                  shader_base                = 0;
@@ -45,6 +63,7 @@ struct SrtRuntime {
 	std::span<const uint32_t> workgroup_counts;
 	uint64_t                  indirect_args_address = 0;
 	ImageHeapSource*          image_heap            = nullptr;
+	HeapRowSource*            heap_rows             = nullptr;
 };
 
 class SrtReadCapture {
@@ -64,6 +83,21 @@ enum class RuntimeValueType { Any, Integer, ImmutableInteger };
 
 bool ValidateRuntimeValue(const ResourcePlan& program, Value value,
                           RuntimeValueType type = RuntimeValueType::Any);
+// ValidateRuntimeValue for many values of one unchanged program: the proofs of shared
+// subexpressions are kept between calls instead of being rebuilt for every value.
+class RuntimeValueValidator {
+public:
+	explicit RuntimeValueValidator(const ResourcePlan& program);
+	~RuntimeValueValidator();
+	RuntimeValueValidator(const RuntimeValueValidator&)            = delete;
+	RuntimeValueValidator& operator=(const RuntimeValueValidator&) = delete;
+
+	bool Validate(Value value, RuntimeValueType type = RuntimeValueType::Any);
+
+private:
+	struct Impl;
+	std::unique_ptr<Impl> m_impl;
+};
 // Uniform across a compute wave, including values derived from its workgroup ID.
 // This does not imply that the host can evaluate the value.
 bool ValidateWaveUniformValue(const ResourcePlan& program, Value value);

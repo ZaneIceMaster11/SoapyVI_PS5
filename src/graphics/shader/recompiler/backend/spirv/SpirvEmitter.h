@@ -27,6 +27,10 @@ struct Profile {
 	// Per-vertex interpolation computes BaryCoordKHR.x as 1 - y - z instead of reading it. NVIDIA's
 	// compiler stops on an internal breakpoint when a sample-shaded MSAA pipeline reads .x.
 	bool derive_barycentric_x = false;
+	// Compute shaders that take implicit derivatives (ImageQueryLod) need a derivative group:
+	// Quads for even 2D local sizes, Linear for other groups whose size is a multiple of four.
+	bool compute_derivative_quads  = true;
+	bool compute_derivative_linear = true;
 };
 
 inline constexpr Profile DefaultProfile {};
