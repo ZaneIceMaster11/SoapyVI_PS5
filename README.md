@@ -1,4 +1,9 @@
-# KytyPS5
+# SoapyVI_PS5
+
+> **Fork of [KytyPS5](https://github.com/KytyPS5/KytyPS5)**, which is itself based on
+> [Kyty](https://github.com/InoriRus/Kyty). All original credit remains with the upstream
+> KytyPS5 project and the original Kyty author — see **[Fork Credits](#fork-credits)**.
+> This fork tracks personal build/testing work and selected changes merged from other forks.
 
 [![Build KytyPS5 (Windows)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28Windows%29&label=Build%20KytyPS5%20%28Windows%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
 [![Build KytyPS5 (Linux)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28Linux%29&label=Build%20KytyPS5%20%28Linux%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
@@ -34,6 +39,20 @@ on Apple Silicon hardware; see [Building on macOS](#building-on-macos).
 
 Community game test results are available in the
 [KytyPS5 Compatibility List](https://kytyps5.github.io/compatibility).
+
+## Test System
+
+Primary hardware this fork is built and tested on:
+
+| Component | Spec |
+|-----------|------|
+| CPU | AMD Ryzen 7 5700X3D (8 cores / 16 threads) |
+| GPU | NVIDIA GeForce RTX 3060 12 GB |
+| RAM | 32 GB DDR4-3200 |
+| OS | Windows 10 Pro (build 19045) |
+
+Performance notes and per-game results from this machine are tracked in
+[`CLAUDE.md`](CLAUDE.md).
 
 ## Bugs and Issues
 
@@ -443,9 +462,26 @@ Pull requests that include AI-assisted or AI-generated work should disclose the 
 involvement and describe the human review and testing performed before submission. Unverified or
 untested generated changes may be closed without review.
 
+## Fork Credits
+
+**SoapyVI_PS5** is a personal fork. It exists to track local build/test work and to
+integrate useful changes from the wider community. Credit for the emulator itself belongs
+upstream:
+
+- **[KytyPS5](https://github.com/KytyPS5/KytyPS5)** — the upstream project this fork is based on.
+- **[InoriRus/Kyty](https://github.com/InoriRus/Kyty)** — the original project that KytyPS5 forks.
+
+### Merged changes from other forks
+
+Any significant change or merge taken from another fork is recorded here with attribution.
+
+| Date | Change | Source fork / author | Commit |
+|------|--------|----------------------|--------|
+| _(none yet)_ | | | |
+
 ## License
 
-KytyPS5 is licensed under the [GNU General Public License version 2](LICENSE)
+SoapyVI_PS5, like upstream KytyPS5, is licensed under the [GNU General Public License version 2](LICENSE)
 (`GPL-2.0-only`).
 
 This project is based on the original [Kyty](https://github.com/InoriRus/Kyty), which was released
