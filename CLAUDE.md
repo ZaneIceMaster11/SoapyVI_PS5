@@ -263,10 +263,28 @@ no launch-path correctness bugs found.** Items to keep in mind:
 - Issues: after ~129 s, **new** crash — null write in game code `pc=0x908bd3a40` (RAGE panic/abort
   thunk: `mov dword [0], imm`, `int3`-padded). `0xC0000005` write to addr `0x0`. Separate, deeper
   bug than the fixed Agc/Ampr one; some earlier engine condition failed.
-- Log: `_Logs/gta6_merge_boot.log`, `_Logs/gta6_merge_console.txt`, `_Logs/crash_20261126_101850.txt`.
-- Action items: (1) Trace what fails before the panic — enable `KYTY_SHADER_REGISTRY`/command-buffer
-  dumps, and check whether a stubbed HLE return (e.g. `8ntsRd07EQA[TextToSpeech2]` or a graphics query)
-  feeds the null. (2) Confirm whether a window/frames actually present on the RTX 3060.
+- Log: `_Logs/gta6_merge_boot.log`, `_Logs/gta6_merge_console.txt`, `_Logs/crash_20261126_101850.txt`;
+  backtrace run `_Logs/crash_20261126_102903.txt` (+ `_Logs/gta6_bt_*`).
+- **Window/frames: confirmed presenting** (user observed the game window). So this is a worker-thread
+  fatal, not a render-path failure.
+- **Panic diagnosis (via the new module+offset backtrace, commit `0a4ba688`):**
+  - Faulting pc `0x908bd3a40` = `eboot.elf+0x8bd3a40`, the game's **trap thunk** (`mov dword [0],imm; ret`).
+  - `[rsp]` return address = `eboot+0x847c55a`: the game calls its **fatal-error handler** through a
+    global fn-ptr at `eboot+0xe0e75e0` (`call rax`; the path is unconditional once reached).
+  - Host caller symbolized (no ASLR; exe base `0x140000000`) = **`LibKernel::PthreadCreate`** → the
+    trap runs on a **RAGE worker thread**.
+  - The fault site sits in a **timing/stats routine** (divide by `1,000,000` = ns→ms; `rdi=0xf4240`;
+    `1/delta` frequency math over a 64-entry table) that then invokes the fatal handler — i.e. RAGE's
+    deliberate fatal reporter gathers perf stats, then traps.
+  - **Not a wall-clock watchdog:** run 1 reached the fatal in **129 s**, run 2 (pipeline cache now
+    populated → faster shader compile) in **62 s**. The fatal tracks *progress*, so it's a deterministic
+    assert at a specific init milestone, not a fixed timeout.
+- Action items / leads: (1) **Timer-HLE hypothesis (most promising, emulator-fixable):** the failing
+  routine does `1/delta`/ns→ms math; a degenerate clock (delta==0, non-monotonic, or wrong TSC
+  frequency) from a kernel timer HLE could trip a sanity assert. Audit `sceKernelReadTsc` /
+  `GetProcessTime` / `clock_gettime` resolution + monotonicity. (2) The triggering branch is upstream
+  in stripped, frame-pointer-less code; a reliable backtrace needs dynamic instrumentation (hook the
+  `eboot+0xe0e75e0` handler or trace per-thread HLE calls in the last second before the trap).
 
 #### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
