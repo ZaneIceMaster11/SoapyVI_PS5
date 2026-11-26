@@ -311,8 +311,22 @@ no launch-path correctness bugs found.** Items to keep in mind:
   video. Use `--guest-tsc` for GTA VI. See the 2026-11-26 TSC changelog entry.
 - Working command (post-fix): `kyty_emulator.exe --game "E:\...\eboot.elf" --guest-tsc
   --shader-log-direction Silent` (shader cache now on by default; `KYTY_SKIP_FAILED_SHADERS=1` optional).
-- Next frontier: whatever follows Bink prologue-video playback (not yet reached a crash there as of
-  this session; let the run continue to observe).
+- **Prologue crash (current frontier, 2026-11-26):** once autopress (`KYTY_AUTOPRESS=1`, taps Cross/X)
+  advances past the first "press X" prompt, the game enters the prologue and **crashes**, flakily, as
+  one of two signatures — both traced to the **NVIDIA shader compiler**:
+  1. **Null-deref inside `nvgpucomp64.dll`** (NVIDIA's shader compiler; base e.g. `0x7ffcdbaa0000`).
+     The host-module crash backtrace (new, commit `a6747deb`) put the faulting pc and every host frame
+     inside `nvgpucomp64.dll` — the driver's compiler crashes building a specific RAGE prologue shader.
+  2. The **`0x8bd3a40` timing fatal** — when that same shader instead compiles *pathologically slowly*,
+     RAGE's timing watchdog fires first. (Same NVIDIA-compiler root; which one you get is a race between
+     worker-thread pipeline compiles and the game's watchdog, hence the flakiness.)
+  - Same class as the existing NVIDIA workaround `1ca1787d` (BaryCoord). `--shader-cache` WarmUp
+    compiles ~150–330 pipelines fine; the culprit is a *new* pipeline built during the prologue.
+  - **Options to get past it:** (a) **try a different NVIDIA driver** (user's is 32.0.15.9636 — a
+    compiler bug here is version-specific; most practical). (b) Identify the offending pipeline (log the
+    shader hash right before each `vkCreate*Pipelines`, reproduce, read the last line in the crash log)
+    then add a SPIR-V emitter workaround — deep, per-shader. (c) Not fixable by `KYTY_SKIP_FAILED_SHADERS`
+    (that catches our translation via setjmp, not a hard AV inside the driver).
 
 #### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
