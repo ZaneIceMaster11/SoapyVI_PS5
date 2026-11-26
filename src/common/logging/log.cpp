@@ -1,12 +1,16 @@
 #include "common/logging/log.h"
 
 #include "common/emulatorConfig.h"
+#include "common/logging/logCategory.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <iterator>
 #include <memory>
+#include <string>
 #include <spdlog/logger.h>
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -27,6 +31,32 @@ static void WriteStdout(std::string_view text, fmt::text_style style) {
 		fmt::print(stdout, style, "{}", text);
 	}
 	std::fflush(stdout);
+}
+
+static Level ToStructuredLevel(Config::LogLevel level) {
+	switch (level) {
+		case Config::LogLevel::Trace: return Level::Trace;
+		case Config::LogLevel::Debug: return Level::Debug;
+		case Config::LogLevel::Info: return Level::Info;
+		case Config::LogLevel::Warn: return Level::Warn;
+		case Config::LogLevel::Error: return Level::Error;
+		case Config::LogLevel::Off: return Level::Off;
+	}
+	return Level::Info;
+}
+
+static std::filesystem::path DefaultSessionLogPath() {
+	const auto now  = std::chrono::system_clock::now();
+	const auto time = std::chrono::system_clock::to_time_t(now);
+	std::tm    tm {};
+#if defined(_WIN32)
+	localtime_s(&tm, &time);
+#else
+	localtime_r(&time, &tm);
+#endif
+	char buffer[32];
+	std::strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &tm);
+	return std::filesystem::path("_Logs") / ("kyty_" + std::string(buffer) + ".log");
 }
 
 void Initialize() {
@@ -52,12 +82,19 @@ void Initialize() {
 		    "%v", spdlog::pattern_time_type::local, ""));
 		g_logger = new spdlog::logger("kyty", std::move(sink));
 	}
+
+	auto log_file = Config::GetLogFile();
+	if (log_file.empty()) {
+		log_file = DefaultSessionLogPath();
+	}
+	InitStructured(log_file, ToStructuredLevel(Config::GetLogLevel()), Config::LogConsoleEnabled());
 }
 
 void Flush() {
 	if (g_logger != nullptr) {
 		g_logger->flush();
 	}
+	FlushStructured();
 }
 
 bool IsSilent() {

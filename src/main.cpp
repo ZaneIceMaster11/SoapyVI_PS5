@@ -85,6 +85,11 @@ static void PrintUsage() {
 	::printf("  --graphics-debug-dump                Enable graphics debug dumps.\n");
 	::printf("  --printf-direction <value>           Silent, Console, or File.\n");
 	::printf("  --printf-output-file <path>          Guest printf output file.\n");
+	::printf("  --log-level <value>                  Session log level: Trace, Debug, Info, Warn,\n"
+	         "                                       Error, or Off. Default: Info.\n");
+	::printf("  --log-file <path>                    Structured session log file. Default: auto\n"
+	         "                                       (_Logs/kyty_<timestamp>.log).\n");
+	::printf("  --log-console                        Also echo the session log to the console.\n");
 	::printf("  --profile                            Enable the Tracy profiler.\n");
 	::printf("  --spirv-debug-printf                 Enable SPIR-V debug printf.\n");
 	::printf("  --readback-linear-images             Read back writable linear images on submit.\n");
@@ -225,6 +230,7 @@ static constexpr Flag FLAGS[] = {
     {"--sync-raw-image-buffers", &ConfigOptions::sync_raw_image_buffers},
     {"--no-trophy-notifications", &ConfigOptions::trophy_enabled, false},
     {"--perf-overlay", &ConfigOptions::perf_overlay_enabled},
+    {"--log-console", &ConfigOptions::log_console},
     {"--playgo-hack", &ConfigOptions::playgo_hack_enabled},
     {"--skip-notice-screen", &ConfigOptions::skip_notice_screen},
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
@@ -447,6 +453,13 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			}
 		} else if (arg == "--printf-output-file") {
 			options.config.printf_output_file = Common::PathFromUtf8(value);
+		} else if (arg == "--log-level") {
+			if (!ParseEnum(value, options.config.log_level)) {
+				::printf("invalid log level: %s\n", value.c_str());
+				return false;
+			}
+		} else if (arg == "--log-file") {
+			options.config.log_file = Common::PathFromUtf8(value);
 		} else if (arg == "--keymap") {
 			const auto split = value.find('=');
 			if (split == std::string::npos || split == 0 || split + 1 == value.size()) {

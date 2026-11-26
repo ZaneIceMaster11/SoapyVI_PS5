@@ -185,6 +185,18 @@ std::filesystem::path GetShaderLogFolder() {
 	return g_config->shader_log_folder;
 }
 
+LogLevel GetLogLevel() {
+	return g_config->log_level;
+}
+
+const std::filesystem::path& GetLogFile() {
+	return g_config->log_file;
+}
+
+bool LogConsoleEnabled() {
+	return g_config->log_console;
+}
+
 bool CommandBufferDumpEnabled() {
 	return g_config->command_buffer_dump_enabled;
 }

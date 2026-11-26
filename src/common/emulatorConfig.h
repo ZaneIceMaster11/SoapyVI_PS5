@@ -24,6 +24,9 @@ struct Lifecycle {
 
 enum class LogDirection { Silent, Console, File };
 
+// Minimum severity for the structured session log (see common/logging/logCategory.h).
+enum class LogLevel { Trace, Debug, Info, Warn, Error, Off };
+
 enum class PresentMode { Fifo, Mailbox, Immediate };
 
 enum class PssrUpscaler { Linear, DLSS, FSR };
@@ -93,6 +96,10 @@ struct ConfigOptions {
 	bool                   graphics_debug_dump_enabled = false;
 	LogDirection           printf_direction            = LogDirection::Silent;
 	std::filesystem::path  printf_output_file          = "_kyty.txt";
+	// Structured session log. An empty log_file auto-names _Logs/kyty_<timestamp>.log.
+	LogLevel               log_level                   = LogLevel::Info;
+	std::filesystem::path  log_file;
+	bool                   log_console                 = false;
 	bool                   profiler_enabled            = false;
 	bool                   spirv_debug_printf_enabled  = false;
 	bool                   gpu_assisted_validation_enabled = false;
@@ -164,6 +171,10 @@ bool                   ShaderValidationEnabled();
 bool                   ShaderCacheEnabled();
 LogDirection           GetShaderLogDirection();
 std::filesystem::path  GetShaderLogFolder();
+
+LogLevel                     GetLogLevel();
+const std::filesystem::path& GetLogFile();
+bool                         LogConsoleEnabled();
 
 bool                  CommandBufferDumpEnabled();
 std::filesystem::path GetCommandBufferDumpFolder();

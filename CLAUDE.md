@@ -59,6 +59,22 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — Structured logging core (verbose-logging initiative, part 1 of 4)
+- New focus: a verbose logging system to capture crashes, shader translations, frame times, and
+  more. Inventoried existing logging (flat spdlog `LOGF`; `DebugCounters`+perf overlay on-screen
+  only; shader IR dump via `--shader-log-*`; crash context via `std::printf` in `KytyExceptionHandler`).
+- Built the **structured log core** (the foundation the other three parts write through):
+  - `common/logging/logCategory.h` — `Level` (Trace→Critical/Off), `Category` (Kernel, Loader,
+    Gpu, Shader, Pipeline, Audio, Input, Hle, Fs, Net, Perf, Crash, Guest), `KLOG*` macros.
+  - `common/logging/logStructured.cpp` — rotating session file (64 MiB × 5), timestamped
+    `[time] [LEVEL] [Category] msg`, min-level gate, optional console echo, `flush_on(warn)`.
+  - Config + CLI: `--log-level`, `--log-file`, `--log-console`; auto file `_Logs/kyty_<timestamp>.log`.
+  - Kept separate from the guest-printf stream; `LOGF` untouched; API kept out of `log.h` to limit rebuilds.
+- **Validated:** build clean (0 errors); `structured_log_tests` passes incl. a real file round-trip;
+  `kyty_emulator --help` lists the new flags. (Gotcha: this spdlog uses wide filenames — pass `path.native()`.)
+- Next parts: crash reporter → perf/frame telemetry sink → shader translation ledger.
+
+
 ### 2026-11-25 — Initial environment setup
 - Inventoried toolchain; confirmed CMake/Ninja bundled in VS 2026, MSVC 14.52 + Win SDK present.
 - All 15 git submodules confirmed initialized.
