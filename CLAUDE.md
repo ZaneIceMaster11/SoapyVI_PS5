@@ -59,6 +59,24 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — First game test (GTA VI) + crash-reporter thread-id fix
+- **Rebuilt the emulator from scratch** — `_Build/` (incl. `winenv.bat`) had been deleted. Recreated
+  `winenv.bat` (paths re-verified: VS18 vcvars64, LLVM `C:\Program Files\LLVM\bin`, Vulkan SDK
+  `1.4.363.0\Bin`, CMake/Ninja now also on global PATH), reconfigured (70s) and built
+  `kyty_emulator` (992/992, exit 0). Binary back at `_Build/windows/kyty_emulator.exe` (~30 MB).
+- **First real game boot attempt — Grand Theft Auto VI** (`PPSA38500`, SDK 12/13). See §5 for the
+  full entry. Boot reaches guest code then crashes in `libc.prx`; **root cause = Agc (PS5 next-gen
+  graphics) is unimplemented** → unresolved stubs → libc AVX store to an unmapped address. Expected
+  for an SDK-12 next-gen title on this emulator.
+- **This validated the crash reporter on a real crash** (previously "pending"): it wrote
+  `_Logs/crash_<ts>.txt` + mirrored the full report to the structured log at Critical. 
+- **Bug found & fixed via the logging system:** the crash report's `thread:` field rendered **blank**
+  — `PthreadGetname` returns 0 (success) with an empty string for never-named guest threads, so the
+  old `!= 0` fallback was skipped. Fixed (`runtimeLinker.cpp`): empty-name now falls back to
+  `(unnamed guest thread)`, and the report + structured marker now also print the **native OS thread
+  id** (`GetCurrentThreadId` / `SYS_gettid` / mach) so a crash can be correlated to the session log.
+  **Validated:** rebuilt, re-ran the identical crash → `thread: (unnamed guest thread) (host tid 25964)`.
+
 ### 2026-11-26 — Crash reporter (verbose-logging initiative, part 2 of 4)
 - `RuntimeLinker::WriteCrashReport(ExceptionInfo)` (runtimeLinker.cpp): on a fatal fault, builds a
   report (git version, faulting thread, registers, ±48 code bytes, 32 stack qwords, and the loaded
@@ -167,7 +185,41 @@ no launch-path correctness bugs found.** Items to keep in mind:
 > One subsection per game tested. Record: build/commit tested, launch command,
 > boot result, FPS/perf, graphical/audio issues, crashes, and log excerpts.
 
-_(No games tested yet — awaiting game files from the user.)_
+#### Grand Theft Auto VI — 2026-11-26
+- Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
+  `requiredSystemSoftwareVersion` 12.00, appSize 320 GiB. Source: `E:\totalyrandomminecraftmoddingfunny`
+  (RAGE engine — `.rpf` archives; `levels_concat.rpf` alone is 202 GB).
+- Commit tested: `4772586` (+ the thread-id fix this session).
+- Command: `kyty_emulator.exe --game "E:\totalyrandomminecraftmoddingfunny\eboot.elf" --log-level Trace --log-file _Logs\gta6_boot.log --shader-log-direction Silent`
+  - **Used the decrypted `eboot.elf`**, not the directory. `--game <dir>` forces `/app0/eboot.bin`
+    (encrypted retail SELF → loader aborts in `Elf64::LoadSegment`). Pointing at `eboot.elf` loads
+    the decrypted image while still mapping `/app0` to the game dir so `.rpf` data resolves.
+- Boot: **crashes early in guest init.** Progress reached:
+  1. All subsystems init OK (Config, Log, Pthread, Profiler, Network, Memory, FileSystem, Controller,
+     Audio, Graphics); Vulkan pipeline cache created for `PPSA38500`; GPU CP assigned; `Title ID: PPSA38500`.
+  2. Modules loaded: `eboot.elf`, `libc.prx`, `libSceNpCppWebApi.prx`. Game `sce_module/` also ships
+     `libc.prx` + `libSceNpCppWebApi.prx`; `fakelib/libSceAmpr.sprx` present.
+  3. Guest code runs: calls `libkernel` stub `yu17wG8L5FI` (prints `version = 13`), then a burst of
+     **`Agc`** stubs (`da1Sm8-QDoU`, `0ZOG0jc9nRg`, `Y-5vneiBtzk`, `oz6zQq1JwCE`, `+u6dKSLWM2o`),
+     then `VideoOut` (`pA8xxaySl7A`) and `Ampr` (`d3lKWPM6odc`) stubs.
+  4. **Crash** (`0xC0000005` access-violation, write) in `libc.prx` at `pc=0x910003e55`, faulting
+     addr `0x0000080400000000`. Fault bytes are AVX stores (`c5 f9 7f …` = `vmovups`/`vmovdqa`) — a
+     libc memset/memcpy writing to an unmapped buffer; `rax=rdi=r12=0x080400000000`.
+- Perf: n/a (never reached a frame).
+- **Root cause: `Agc` (PS5 next-gen graphics API, SDK 12/13) is unimplemented.** KytyPS5 implements
+  the legacy `Gnm`, not `Agc`. Unresolved `Agc` imports are patched to logging stubs that return a
+  default; the game treats a stubbed return as a valid buffer/context pointer and a subsequent libc
+  AVX store lands on unmapped memory → fault. This is the fundamental blocker for GTA VI and any
+  SDK-12+ next-gen title; not a regression in this fork.
+- Logs: `_Logs/gta6_boot*.log` (structured), `_Logs/gta6_console*.txt`, `_Logs/crash_20261126_*.txt`.
+- Observation on the logging system: the loader/HLE path still logs via the **flat `LOGF`/printf**
+  stream (`Unresolved import stub called: …`), not the new structured `KLOG*` categories — only the
+  crash reporter writes to the structured log so far. Routing the unresolved-stub and module-load
+  events through `KLOG(Category::Loader/Hle)` would make this kind of boot triage far easier
+  (candidate for a future part of the verbose-logging initiative).
+- Action items: (1) to get past this, `Agc` command-buffer/submit HLE would need implementing — large.
+  (2) Route loader/HLE events through structured logging. (3) Consider having unresolved stubs return
+  a poisoned/guard pointer rather than 0 so faults point at the stub, not deep in libc.
 
 ### Template
 ```

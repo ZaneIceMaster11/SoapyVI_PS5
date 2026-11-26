@@ -6,5 +6,6 @@ _Build/vscode-clang/
 _Build/
 cmake-build-debug/
 _PipelineCache/
+_Logs/
 CMakeUserPresets.json
 aqtinstall.log

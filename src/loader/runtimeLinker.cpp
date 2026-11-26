@@ -632,14 +632,26 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 	// Fatal, best-effort context: do not take m_mutex — the faulting thread may already hold it.
 	char thread_name[64] = "(host thread)";
 	if (auto* self = Libs::LibKernel::PthreadSelfOrNull(); self != nullptr) {
-		if (Libs::LibKernel::PthreadGetname(self, thread_name) != 0) {
+		// PthreadGetname can succeed (returns 0) yet leave an empty name for guest threads that
+		// were never named — don't let that render as a blank line in the report.
+		if (Libs::LibKernel::PthreadGetname(self, thread_name) != 0 || thread_name[0] == '\0') {
 			std::snprintf(thread_name, sizeof(thread_name), "(unnamed guest thread)");
 		}
 	}
 
+	// Native OS thread id of the faulting thread (the handler runs on it) — lets a crash be
+	// correlated against the session log regardless of whether a guest name was set.
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	const unsigned long long host_tid = ::GetCurrentThreadId();
+#elif KYTY_PLATFORM == KYTY_PLATFORM_LINUX
+	const unsigned long long host_tid = static_cast<unsigned long long>(::syscall(SYS_gettid));
+#else
+	const unsigned long long host_tid = static_cast<unsigned long long>(::pthread_mach_thread_np(::pthread_self()));
+#endif
+
 	std::string r = "=== KytyPS5 crash report ===\n";
 	r += fmt::format("version: {}\n", KYTY_GIT_VERSION);
-	r += fmt::format("thread:  {}\n", thread_name);
+	r += fmt::format("thread:  {} (host tid {})\n", thread_name, host_tid);
 	r += fmt::format("type={} code={} pc=0x{:016x} access={} addr=0x{:016x}\n",
 	                 static_cast<unsigned>(info.type), info.native_code, info.exception_address,
 	                 static_cast<unsigned>(info.access_violation_type), info.access_violation_vaddr);
@@ -696,9 +708,9 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 	}
 
 	// Mirror to the structured log: a concise marker (pointing at the file) plus the full body.
-	KLOGC(Log::Category::Crash, "fatal fault pc=0x%016llx addr=0x%016llx thread=%s -> %s",
+	KLOGC(Log::Category::Crash, "fatal fault pc=0x%016llx addr=0x%016llx thread=%s(host tid %llu) -> %s",
 	      static_cast<unsigned long long>(info.exception_address),
-	      static_cast<unsigned long long>(info.access_violation_vaddr), thread_name,
+	      static_cast<unsigned long long>(info.access_violation_vaddr), thread_name, host_tid,
 	      path.string().c_str());
 	Log::Message(Log::Level::Critical, Log::Category::Crash, r);
 	Log::FlushStructured();
