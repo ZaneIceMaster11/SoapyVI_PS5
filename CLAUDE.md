@@ -79,8 +79,17 @@
 - Binaries: `_Build/windows/kyty_emulator.exe` (~30 MB), `_Build/windows/launcher/kyty_launcher.exe` (~5.3 MB).
   Qt runtime DLLs deployed next to the launcher via windeployqt.
 - Smoke test: `kyty_emulator.exe --help` runs and prints `ver = 0.3.0, git = …93cce665-dirty`.
-- `ctest` run in progress — results to be recorded next.
-- Still blocked on `gh` auth for the push (token kept being rejected / network).
+- `ctest`: **80/84 passed (95%)**; 4 failures logged in §4 (video decoder + kernel fs crashes,
+  an NTFS timestamp test, and one not-run test). None block the emulator from building/running.
+
+### 2026-11-25 — Fork published & pushed ✅
+- Authenticated `gh` via `GH_TOKEN` env (piping the token into `--with-token` on PowerShell
+  appended a CR and caused spurious `401 Bad credentials`; the env var avoids that).
+- Created public repo **https://github.com/ZaneIceMaster11/SoapyVI_PS5**.
+- Remotes: `origin` → SoapyVI_PS5, `upstream` → KytyPS5. Full `main` history pushed.
+- **Security:** the classic PAT was shared in chat — **revoke it** at github.com/settings/tokens
+  once local push access is re-established via a terminal `gh auth login`.
+- Next: investigate the `kernel_file_system` / `vdecsw` test crashes; then await a valid game dump.
 
 ---
 
@@ -90,7 +99,11 @@
 - [x] clang-cl resolves MSVC 14.52 STL headers — configure succeeded via `winenv.bat` (vcvars64).
 - [x] glslang on PATH — `C:\VulkanSDK\1.4.363.0\Bin` added by `winenv.bat`; configure found it.
 - [x] Qt route — `aqtinstall`, prefix `C:/Qt/6.8.3/msvc2022_64`.
-- [ ] After build: run `ctest --test-dir _Build/windows --output-on-failure`; record pass/fail here.
+- [x] ctest: **80/84 passed (95%)** on this toolchain. Failures (upstream code, not fork regressions):
+  - `common` → `File.GetTimesReportsExactNanoseconds` — NTFS timestamp-precision expectation; environmental, not launch-related.
+  - `vdecsw` → crash `0xC0000409` (stack-overrun fastfail) — software video decoder (FMV/cutscenes). Investigate before trusting video playback.
+  - `kernel_file_system` → crash `0xC0000409` — **launch-relevant** (file mounting); investigate next.
+  - `psml` → Not Run — `psml_tests` binary not produced by the `kyty_tests` target set; build it explicitly to run.
 - [ ] Tracy's "WrapVulkanHeaders not found" — confirm benign (project uses vendored headers).
 
 ### Peer review — game-launch path (2026-11-25)
