@@ -59,6 +59,23 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — Upstream fix backport: two failing tests now green (80/84 → 82/84)
+- Started an upstream commit/PR watch (baseline + diff state under `_Logs/upstream-watch/`,
+  gitignored). We are even with upstream HEAD `93cce6656`. Triaged ~50 open upstream PRs against
+  our failing tests and Windows/RTX 3060 hardware.
+- Backported two tiny, test-only upstream fixes (applied via `git apply` of the PR diffs):
+  - **KytyPS5#2478** (`tests/FileTimeTestUtil.h`): cast to the filesystem-clock duration before the
+    clock_cast so an ns Unix timestamp no longer overflows MSVC's file_clock → fixes
+    `common` → `File.GetTimesReportsExactNanoseconds` (was the NTFS-precision failure in §4).
+  - **KytyPS5#2512** (`tests/VdecswTests.cpp`): drain the combined decode through the new
+    receive-on-`Flush` semantics (since 8ecc1af4) instead of flushing after every AU → fixes
+    `vdecsw` → `TestCombinedDecode` (was the `0xC0000409` fastfail in §4).
+- **Validated:** incremental build clean (exit 0); rebuilt `common_tests.exe` + `vdecsw_tests.exe`;
+  `ctest -R "common|vdecsw"` → **2/2 pass** (both were failing before). Committed + pushed to the fork.
+- Watch candidates still open (need a build/game to validate, not yet applied): **#2415** (NVIDIA
+  pipeline-compile crash — our GPU). **#2511** (kernel_file_system) is macOS-only and does **not**
+  fix our Windows `/proc` path — skipped.
+
 ### 2026-11-26 — First game test (GTA VI) + crash-reporter thread-id fix
 - **Rebuilt the emulator from scratch** — `_Build/` (incl. `winenv.bat`) had been deleted. Recreated
   `winenv.bat` (paths re-verified: VS18 vcvars64, LLVM `C:\Program Files\LLVM\bin`, Vulkan SDK
@@ -144,9 +161,9 @@
 - [x] clang-cl resolves MSVC 14.52 STL headers — configure succeeded via `winenv.bat` (vcvars64).
 - [x] glslang on PATH — `C:\VulkanSDK\1.4.363.0\Bin` added by `winenv.bat`; configure found it.
 - [x] Qt route — `aqtinstall`, prefix `C:/Qt/6.8.3/msvc2022_64`.
-- [x] ctest: **80/84 passed (95%)** on this toolchain. Failures (upstream code, not fork regressions):
-  - `common` → `File.GetTimesReportsExactNanoseconds` — NTFS timestamp-precision expectation; environmental, not launch-related.
-  - `vdecsw` → crash `0xC0000409` (stack-overrun fastfail) — software video decoder (FMV/cutscenes). Investigate before trusting video playback.
+- [x] ctest: **82/84 passed** on this toolchain (was 80/84; +2 from the 2026-11-26 upstream backport). Remaining failures (upstream code, not fork regressions):
+  - [x] ~~`common` → `File.GetTimesReportsExactNanoseconds`~~ — **FIXED** by backporting KytyPS5#2478 (MSVC file_clock overflow). Passes.
+  - [x] ~~`vdecsw` → crash `0xC0000409`~~ — **FIXED** by backporting KytyPS5#2512 (new receive-only `Flush` semantics). Passes.
   - `kernel_file_system` → crash `0xC0000409`. **Investigated (root cause found):** the suite's
     first test, `TestMutexHandoff`, detects a sleeping thread via `/proc/self/task/<tid>/stat`
     (`WaitUntilSleeping`), which is Linux-only; on Windows the 5 s deadline trips and `Check()`
