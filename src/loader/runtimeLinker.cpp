@@ -183,10 +183,19 @@ static KYTY_SYSV_ABI uint64_t UnresolvedImportStub(uint64_t record_id) {
 			     log_index, record.patch_vaddr, record.index, record.name.c_str(),
 			     magic_enum::enum_name(record.type), magic_enum::enum_name(record.bind),
 			     record.program.c_str());
+			// Mirror to the structured session log: the first call of each unresolved import is
+			// the signal we want when triaging a boot — which HLE surface the guest reached and
+			// died on. Returns 0 (SCE_OK/null), so a downstream fault points back here by symbol.
+			KLOGW(Log::Category::Hle,
+			      "unresolved import [%u] symbol=%s program=%s patch_vaddr=0x%016llx returns 0",
+			      log_index, record.name.c_str(), record.program.c_str(),
+			      static_cast<unsigned long long>(record.patch_vaddr));
 		} else {
 			printf("Unresolved import stub called: <bad-record>\n");
 			LOGF("Unresolved import stub called [%u]: record_id=%" PRIu64 " symbol=<bad-record>\n",
 			     log_index, record_id);
+			KLOGW(Log::Category::Hle, "unresolved import [%u] record_id=%llu symbol=<bad-record>",
+			      log_index, static_cast<unsigned long long>(record_id));
 		}
 	}
 	return 0;
@@ -1299,6 +1308,14 @@ Program* RuntimeLinker::LoadProgram(const std::filesystem::path& elf_name) {
 	        .ends_with("_module/")) {
 		program->fail_if_global_not_resolved = false;
 	}
+
+	// Record every loaded module in the structured session log so a boot's module layout (the same
+	// list the crash reporter dumps) is available even without a crash, and so loads interleave in
+	// time with the unresolved-import and crash events for triage.
+	KLOGI(Log::Category::Loader, "loaded module id=%d base=0x%016llx size=0x%08llx shared=%d %s",
+	      program->unique_id, static_cast<unsigned long long>(program->base_vaddr),
+	      static_cast<unsigned long long>(program->base_size), program->elf->IsShared() ? 1 : 0,
+	      elf_name.filename().string().c_str());
 
 	return program;
 }

@@ -59,6 +59,26 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — Structured loader/HLE logging + GTA VI boot timeline
+- Routed the two highest-signal boot events through the structured session log so a boot is one
+  timestamped timeline (not just the flat console stream):
+  - `RuntimeLinker::LoadProgram` → `KLOGI(Category::Loader, "loaded module id=… base=… size=… shared=… <name>")`.
+  - `UnresolvedImportStub` → `KLOGW(Category::Hle, "unresolved import [n] symbol=… program=… patch_vaddr=… returns 0")`
+    (mirrors the existing console/`LOGF` line; same 1024-call cap; returns 0 = SCE_OK/null unchanged).
+  - Kept the flat `LOGF`/`printf` lines intact — this is additive.
+- **Poisoned-pointer stub idea: deferred.** PS5 functions return `0 = SCE_OK`; returning a nonzero
+  poison would make the guest treat every stubbed call as *failed* and likely regress the boot
+  earlier/differently. Not worth it vs. the symbol-level logging we now have.
+- **Validated** (rebuilt clean, re-ran GTA VI): the session log now shows the full boot in order —
+  `eboot.elf`/`libc.prx`/`libSceNpCppWebApi.prx` loads, then **8** unresolved imports
+  (`libkernel` version check → 5× **`Agc`** → `VideoOut` → `Ampr`) → the `Crash` marker. Confirms
+  the dominant missing surface is **`Agc`** and the fault follows ~230 ms of real engine init after
+  `VideoOut` (so the libc write to unmapped `0x080400000000` is engine memory setup, not a stub return).
+  Logs: `_Logs/gta6_boot3.log`, `_Logs/crash_20261126_0955*.txt`.
+- **Honest ceiling:** GTA VI (SDK 12/13, RAGE, `Agc`) will not boot on this emulator — getting past
+  this fault requires implementing the `Agc` graphics/command-submit + its memory allocator, which is
+  a large feature, not a loop-sized fix. Diagnostics are now maximized; see §5 action items.
+
 ### 2026-11-26 — Upstream fix backport: two failing tests now green (80/84 → 82/84)
 - Started an upstream commit/PR watch (baseline + diff state under `_Logs/upstream-watch/`,
   gitignored). We are even with upstream HEAD `93cce6656`. Triaged ~50 open upstream PRs against
