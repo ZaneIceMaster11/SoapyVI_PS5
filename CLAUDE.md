@@ -59,6 +59,36 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — Merged `flo/gta6-bringup`: early Agc/Ampr boot crash FIXED, GTA VI reaches in-game rendering
+- **Root cause of the early crash (confirmed, then fixed).** The off-boot fault was a write to
+  `0x0804_0000_0000`, which sits inside the **extended/GPU memory region** (`kExtendedMemoryBase =
+  0x0800_0000_0000`, 512 GiB) — reserved but uncommitted. The last unresolved import before the fault
+  was Ampr NID **`d3lKWPM6odc`**, i.e. `sceAmprAmmCommandBufferAllocatePaForPrt` — the PRT physical-
+  address allocator that should have backed that region. So the earlier "it's Agc" note was imprecise:
+  the proximate cause was the missing **Ampr** PRT path, not Agc.
+- **Fix: merged the `flo/kyty` fork's `gta6-bringup` branch** (`git.disroot.org/flo/kyty`, branch
+  `flo/gta6-bringup`) into `gta6-bringup-merge` (merge commit, 5 commits on top of upstream `93cce665`;
+  big one = `f3cd7cc8` "GTA VI (PPSA38500) bring-up: boots to in-game rendering", 94 files +6005/-592).
+  It registers `d3lKWPM6odc` → `AmmCommandBufferAllocatePaForPrt`, the 5 missing Agc NIDs
+  (AcbEventWrite/AcbAtomicMem/DcbAtomicMem/AcbRewind/DcbStallCommandBufferParser GetSize etc.),
+  VideoOut SetGlobalBlendSpace, kernel HasTrinityMode, a large shader-recompiler bring-up for RAGE,
+  worker-thread pipeline/compute compile, and a **transient-unmap fault-retry** in the exception
+  handler (`WaitForTransientUnmap`/`RetryTransientUnmapFault`).
+- **Conflicts resolved (3):** all one root — our `derive_barycentric_x` Profile field (NVIDIA
+  BaryCoord fix, `1ca1787d`) vs flo's `compute_derivative_quads`/`_linear`. Kept all three fields;
+  `Profile` now serializes `a..k` (11). Our crash reporter + structured logging in `runtimeLinker.cpp`
+  merged cleanly and coexist with flo's retry (retry runs *before* `WriteCrashReport`).
+- **Validated:** clean reconfigure + build (`kyty_emulator`, 247/247, exit 0, 0 errors). Re-ran GTA VI:
+  **zero unresolved imports** through boot; all subsystems init; Vulkan pipeline cache; it **translates
+  and compiles shaders** (VS/PS/CS climbing), brings up AJM MP3 audio and BDA shader memory — i.e. it
+  is in the in-game render path. Ran ~2 min with **no** `0x0804…` fault.
+- **New frontier crash (separate, much deeper).** After ~129 s it faults in the game's **own eboot
+  code** at `pc=0x908bd3a40`, a null-pointer write (`mov dword [0x00000000], imm` preceded by `int3`
+  padding) — RAGE's own panic/abort thunk, so some earlier engine condition failed. A new unresolved
+  import `8ntsRd07EQA[TextToSpeech2]` (stubbed → 0) appeared ~2 min earlier; likely unrelated.
+  Logs: `_Logs/gta6_merge_boot.log`, `_Logs/gta6_merge_console.txt`, `_Logs/crash_20261126_101850.txt`.
+  This is no longer an *early-boot* crash; chasing it is a deep in-game-bring-up task (see §5).
+
 ### 2026-11-26 — Structured loader/HLE logging + GTA VI boot timeline
 - Routed the two highest-signal boot events through the structured session log so a boot is one
   timestamped timeline (not just the flat console stream):
@@ -222,7 +252,23 @@ no launch-path correctness bugs found.** Items to keep in mind:
 > One subsection per game tested. Record: build/commit tested, launch command,
 > boot result, FPS/perf, graphical/audio issues, crashes, and log excerpts.
 
-#### Grand Theft Auto VI — 2026-11-26
+#### Grand Theft Auto VI — 2026-11-26 (after `flo/gta6-bringup` merge)
+- Commit: `86f98a2c` (merge of `flo/gta6-bringup` into `gta6-bringup-merge`).
+- Command: `kyty_emulator.exe --game "E:\totalyrandomminecraftmoddingfunny\eboot.elf" --log-level Trace
+  --log-file _Logs\gta6_merge_boot.log --shader-log-direction Silent` (env `KYTY_SKIP_FAILED_SHADERS=1`).
+- Boot: **passes the previous early crash.** Zero unresolved imports through boot; subsystems init;
+  Vulkan pipeline cache for `PPSA38500`; shader translation/compile underway (VS/PS/CS counts rising);
+  AJM MP3 audio; BDA shader memory. Reaches the in-game render path (per logs; not visually confirmed).
+- Perf: n/a yet (crashes before a confirmed steady frame loop).
+- Issues: after ~129 s, **new** crash — null write in game code `pc=0x908bd3a40` (RAGE panic/abort
+  thunk: `mov dword [0], imm`, `int3`-padded). `0xC0000005` write to addr `0x0`. Separate, deeper
+  bug than the fixed Agc/Ampr one; some earlier engine condition failed.
+- Log: `_Logs/gta6_merge_boot.log`, `_Logs/gta6_merge_console.txt`, `_Logs/crash_20261126_101850.txt`.
+- Action items: (1) Trace what fails before the panic — enable `KYTY_SHADER_REGISTRY`/command-buffer
+  dumps, and check whether a stubbed HLE return (e.g. `8ntsRd07EQA[TextToSpeech2]` or a graphics query)
+  feeds the null. (2) Confirm whether a window/frames actually present on the RTX 3060.
+
+#### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
   `requiredSystemSoftwareVersion` 12.00, appSize 320 GiB. Source: `E:\totalyrandomminecraftmoddingfunny`
   (RAGE engine — `.rpf` archives; `levels_concat.rpf` alone is 202 GB).
@@ -275,6 +321,8 @@ no launch-path correctness bugs found.** Items to keep in mind:
 ## 6. Repo / push workflow
 
 - Upstream origin: `https://github.com/KytyPS5/KytyPS5.git`
+- Bring-up fork merged in: **`flo`** → `https://git.disroot.org/flo/kyty.git` (branch `flo/gta6-bringup`;
+  source of the 2026-11-26 GTA VI in-game-rendering bring-up).
 - Target fork: **`SoapyVI_PS5`** (to be created under the user's GitHub account).
 - Rule: push only **working, validated** commits. Each push updates this log.
 - Status: ⬜ fork not yet created (requires `gh` CLI + GitHub auth).
