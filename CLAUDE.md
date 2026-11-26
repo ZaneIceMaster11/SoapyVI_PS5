@@ -338,6 +338,18 @@ no launch-path correctness bugs found.** Items to keep in mind:
     most promising emulator-side fix. (b) RE the watchdog threshold in eboot and neutralize/relax it
     (patch the fatal path at `eboot+0xe0e75e0`/`0x8bd3a40`) — risky. (c) Slow/pause the guest clock
     during heavy compile so the measured delta stays in-bounds — hacky.
+  - **Update — tried option (b), watchdog neutralized (`KYTY_NEUTRALIZE_FATAL`, env-gated NOP patcher
+    in `Execute`):** `KYTY_NEUTRALIZE_FATAL=0x8bd3a40:11,0x847c55a:13` NOPs both RAGE trap sites. The
+    `0x8bd3a40` fatal is gone and the game runs past it — but it does **not** render: it enters a
+    **runaway pipeline-compile / memory loop** (driver cache `_PipelineCache/PPSA38500.bin` balloons
+    24→102 MB+ and climbing; working set grows to **15 GB**; high CPU; no frames), reaching the
+    `Bink Snd` prologue thread then never stabilizing. **So the watchdog was catching a real
+    non-completion** — neutralizing it is not a path to gameplay. Had to kill the process (OOM risk on
+    32 GB). The real blocker is whatever makes the prologue never converge (endless pipeline compiles).
+  - **Next diagnostic:** determine whether the storm is **genuinely new** pipelines (shader-permutation
+    explosion / render-state churn — game behavior) or **re-compiles of identical** pipelines (a
+    pipeline-cache *key* bug in the emulator — fixable, would stop the storm). Instrument the pipeline
+    key/dedup path to count distinct vs repeat compiles.
 
 #### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),

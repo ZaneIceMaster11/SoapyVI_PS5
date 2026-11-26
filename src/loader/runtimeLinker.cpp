@@ -1432,6 +1432,47 @@ void RuntimeLinker::Execute(const std::filesystem::path& game_patch) {
 	auto* libc = Common::File::IsFileExisting(libc_path) ? LoadProgram(libc_path) : nullptr;
 	RelocateAll();
 
+	// KYTY_NEUTRALIZE_FATAL=off:len[,off:len...] (hex offset into the main module, decimal length):
+	// overwrite those guest bytes with NOPs (0x90). A diagnostic lever to defang a game's own
+	// fatal/abort path — e.g. GTA VI's RAGE prologue timing watchdog traps at eboot+0x8bd3a40 (11,
+	// the trap thunk's `mov [0],imm`, leaving its trailing `ret`) and eboot+0x847c55a (13, the
+	// reporter's `mov [0],0` + `int 0x41`) — to see whether execution proceeds past it.
+	if (const char* spec = std::getenv("KYTY_NEUTRALIZE_FATAL");
+	    spec != nullptr && !m_programs.empty() && m_programs.front() != nullptr) {
+		const uint64_t base = m_programs.front()->base_vaddr;
+		const std::string s(spec);
+		for (size_t pos = 0; pos < s.size();) {
+			const auto comma = s.find(',', pos);
+			const auto token = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+			pos              = comma == std::string::npos ? s.size() : comma + 1;
+			const auto colon = token.find(':');
+			if (colon == std::string::npos) {
+				continue;
+			}
+			const auto off = std::strtoull(token.substr(0, colon).c_str(), nullptr, 16);
+			const auto len = std::strtoull(token.substr(colon + 1).c_str(), nullptr, 10);
+			if (len == 0 || len > 256) {
+				continue;
+			}
+			const auto addr = base + off;
+			if (Common::VirtualMemory::Protect(addr, len,
+			                                   Common::VirtualMemory::Mode::ExecuteReadWrite)) {
+				std::memset(reinterpret_cast<void*>(addr), 0x90, len);
+				Common::VirtualMemory::FlushInstructionCache(addr, len);
+				LOGF_COLOR(Log::Color::BrightYellow,
+				           "KYTY_NEUTRALIZE_FATAL: NOPed %llu bytes at %s+0x%llx (vaddr 0x%llx)\n",
+				           static_cast<unsigned long long>(len),
+				           m_programs.front()->file_name.filename().string().c_str(),
+				           static_cast<unsigned long long>(off),
+				           static_cast<unsigned long long>(addr));
+			} else {
+				LOGF_COLOR(Log::Color::BrightRed,
+				           "KYTY_NEUTRALIZE_FATAL: protect failed at vaddr 0x%llx\n",
+				           static_cast<unsigned long long>(addr));
+			}
+		}
+	}
+
 	if (!game_patch.empty()) {
 		if (!GamePatch::Apply(game_patch, m_programs.empty() ? nullptr : m_programs.front(),
 		                      m_programs)) {
