@@ -1017,6 +1017,11 @@ bool HostInputWaitEvent(SDL_Event* event, int max_wait_ms) {
 		const auto now = SDL_GetTicks();
 		if (now - last > (auto_down ? 150u : 2500u)) {
 			last = now; auto_down = !auto_down;
+			// SDLK_J maps to Cross (X) — auto-tap it so unattended runs advance "Press X" prompts.
+			// Log the press edge so a headless run can confirm from the log that input is firing.
+			if (auto_down) {
+				LOGF("KYTY_AUTOPRESS: tapping Cross (X)\n");
+			}
 			HostInputKey(SDLK_J, auto_down);
 		}
 		max_wait_ms = max_wait_ms < 0 || max_wait_ms > 50 ? 50 : max_wait_ms;

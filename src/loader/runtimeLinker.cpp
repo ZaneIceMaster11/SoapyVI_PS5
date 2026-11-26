@@ -675,7 +675,9 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 	                 info.rax, info.rbx, info.rcx, info.rdx, info.rsi, info.rdi, info.rbp, info.rsp,
 	                 info.r8, info.r9, info.r10, info.r11, info.r12, info.r13, info.r14, info.r15);
 
-	// Resolve a guest address to "<module>+0x<offset>" when it lands inside a loaded module, else "".
+	// Resolve an address to "<module>+0x<offset>". Guest modules first; then, so host-thread faults
+	// (e.g. a crash inside a Windows DLL or the emulator) are diagnosable, the host module at the
+	// address via the OS loader.
 	auto describe = [this](uint64_t addr) -> std::string {
 		for (const auto* program: m_programs) {
 			if (program != nullptr && addr >= program->base_vaddr &&
@@ -684,6 +686,20 @@ void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo&
 				                   addr - program->base_vaddr);
 			}
 		}
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+		HMODULE module = nullptr;
+		if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+		                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		                       reinterpret_cast<LPCWSTR>(addr), &module) != 0 &&
+		    module != nullptr) {
+			wchar_t path[MAX_PATH] = {};
+			if (GetModuleFileNameW(module, path, MAX_PATH) != 0) {
+				const std::filesystem::path p(path);
+				return fmt::format("{}+0x{:x}", p.filename().string(),
+				                   addr - reinterpret_cast<uint64_t>(module));
+			}
+		}
+#endif
 		return {};
 	};
 	if (auto d = describe(info.exception_address); !d.empty()) {
