@@ -59,6 +59,33 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — **GTA VI prologue crash FIXED: `--guest-tsc`** + shader precache on by default
+- **Root cause of the post-boot panic (found + fixed): host TSC frequency.** The deterministic fatal
+  (RAGE worker-thread trap via its global fatal handler, in a timing/stats routine — see diagnosis
+  below) was a **timing sanity check calibrated to the PS5's fixed 1.6 GHz TSC**. On this Ryzen host
+  the guest was reading the host TSC frequency, so a computed duration fell out of range and RAGE
+  fataled. The fault registers were the tell: `rbx==r14` and `rdx` are raw timestamps, `rdi=0xf4240`
+  = 1,000,000 (the ns→ms / µs divisor).
+  - **Fix: run with `--guest-tsc`** (presents the PS5's 1.6 GHz via `KernelGuestTscMultiplier`,
+    `KernelGetTscFrequencyNative` → `GUEST_TSC_FREQUENCY`). With it, GTA VI runs **4.5+ min with no
+    crash** (was 62–129 s), and reaches a new milestone — a **`Bink Snd`** thread spawns
+    (`entry=eboot+0x4492920`): RAD **Bink** video, i.e. the **prologue/intro cutscene**. So it's past
+    the wall and into prologue video init. `--guest-tsc` is **required for GTA VI** (left default-off
+    per upstream; do not assume it's safe for every title).
+- **Shader/pipeline precache ON by default** (commit `1ee83854`). flo's merge added a cross-run shader
+  store (`WarmUp`): translated SPIR-V modules + graphics/compute pipelines persist to
+  `_PipelineCache/<title>.shaders` and recompile in parallel at startup, so a 3D scene loads with far
+  less work. The Qt launcher already defaulted it on; the raw CLI defaulted it off — flipped the CLI
+  default to true and added `--no-shader-cache` to opt out. Validated: a warm run logs e.g.
+  "Shader cache: loaded 303 programs, 311 modules, 234 pipelines". The store is build-keyed (a rebuild
+  invalidates stale shaders — correct). **Caveat:** `WarmUp` is synchronous at startup (6–35 s here,
+  varies with disk/CPU) — not truly "background." Moving it off the boot thread is a possible
+  follow-up (needs cache-map locking vs. concurrent GetProgram).
+- **Diagnostics added this session** (how the TSC cause was found): module+offset backtrace in the
+  crash report (`0a4ba688`); guest thread-creation trace + faulting-thread entry (`981534be`). These
+  showed the faulting thread is one of 48 pooled RAGE workers (`entry=eboot+0x847c630`) and the fatal
+  is a deliberate job-system trap — which pointed at timing, then the TSC frequency.
+
 ### 2026-11-26 — Merged `flo/gta6-bringup`: early Agc/Ampr boot crash FIXED, GTA VI reaches in-game rendering
 - **Root cause of the early crash (confirmed, then fixed).** The off-boot fault was a write to
   `0x0804_0000_0000`, which sits inside the **extended/GPU memory region** (`kExtendedMemoryBase =
@@ -279,12 +306,13 @@ no launch-path correctness bugs found.** Items to keep in mind:
   - **Not a wall-clock watchdog:** run 1 reached the fatal in **129 s**, run 2 (pipeline cache now
     populated → faster shader compile) in **62 s**. The fatal tracks *progress*, so it's a deterministic
     assert at a specific init milestone, not a fixed timeout.
-- Action items / leads: (1) **Timer-HLE hypothesis (most promising, emulator-fixable):** the failing
-  routine does `1/delta`/ns→ms math; a degenerate clock (delta==0, non-monotonic, or wrong TSC
-  frequency) from a kernel timer HLE could trip a sanity assert. Audit `sceKernelReadTsc` /
-  `GetProcessTime` / `clock_gettime` resolution + monotonicity. (2) The triggering branch is upstream
-  in stripped, frame-pointer-less code; a reliable backtrace needs dynamic instrumentation (hook the
-  `eboot+0xe0e75e0` handler or trace per-thread HLE calls in the last second before the trap).
+- **RESOLVED:** the timer hypothesis was correct — the fatal is a TSC-frequency sanity check. Running
+  with **`--guest-tsc`** (PS5 1.6 GHz) clears it; GTA VI then runs 4.5+ min and reaches Bink prologue
+  video. Use `--guest-tsc` for GTA VI. See the 2026-11-26 TSC changelog entry.
+- Working command (post-fix): `kyty_emulator.exe --game "E:\...\eboot.elf" --guest-tsc
+  --shader-log-direction Silent` (shader cache now on by default; `KYTY_SKIP_FAILED_SHADERS=1` optional).
+- Next frontier: whatever follows Bink prologue-video playback (not yet reached a crash there as of
+  this session; let the run continue to observe).
 
 #### Grand Theft Auto VI — 2026-11-26 (pre-merge; early Agc/Ampr crash)
 - Title: `PPSA38500` / contentId `EP1004-PPSA38500_00-GRANDTHEFTAUTO00`, SDK `0x12000000…` (12.00),
