@@ -59,6 +59,17 @@
 
 ## 3. Changelog (newest first)
 
+### 2026-11-26 — Crash reporter (verbose-logging initiative, part 2 of 4)
+- `RuntimeLinker::WriteCrashReport(ExceptionInfo)` (runtimeLinker.cpp): on a fatal fault, builds a
+  report (git version, faulting thread, registers, ±48 code bytes, 32 stack qwords, and the loaded
+  module list with the module containing the PC marked), writes `_Logs/crash_<timestamp>.txt`,
+  mirrors it to the structured log (`KLOGC(Category::Crash, …)` marker + full body at Critical),
+  and still echoes to the console.
+- `KytyExceptionHandler` now calls it instead of the old stdout-only dump — so crash context is
+  captured in the session log and a standalone file even with `--printf-direction File`.
+- Best-effort/lock-free (no `m_mutex`) since the faulting thread may hold it. **Validated:** emulator
+  builds clean (0 errors). Runtime crash-path validation pending a real game/crash.
+
 ### 2026-11-26 — Structured logging core (verbose-logging initiative, part 1 of 4)
 - New focus: a verbose logging system to capture crashes, shader translations, frame times, and
   more. Inventoried existing logging (flat spdlog `LOGF`; `DebugCounters`+perf overlay on-screen

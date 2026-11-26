@@ -8,6 +8,7 @@
 #include "common/fpEnv.h"
 #include "common/hostException.h"
 #include "common/logging/log.h"
+#include "common/logging/logCategory.h"
 #include "common/platform/sysDbg.h"
 #include "common/profiler.h"
 #include "common/singleton.h"
@@ -25,15 +26,20 @@
 #include "loader/symbolDatabase.h"
 #include "loader/x64InstructionEmulator.h"
 
+#include "kytyGitVersion.h"
+
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fmt/format.h>
 #include <magic_enum.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
@@ -622,6 +628,84 @@ static bool IsReadableRange(uint64_t addr, uint64_t size) {
 	return true;
 }
 
+void RuntimeLinker::WriteCrashReport(const Common::HostException::ExceptionInfo& info) {
+	// Fatal, best-effort context: do not take m_mutex — the faulting thread may already hold it.
+	char thread_name[64] = "(host thread)";
+	if (auto* self = Libs::LibKernel::PthreadSelfOrNull(); self != nullptr) {
+		if (Libs::LibKernel::PthreadGetname(self, thread_name) != 0) {
+			std::snprintf(thread_name, sizeof(thread_name), "(unnamed guest thread)");
+		}
+	}
+
+	std::string r = "=== KytyPS5 crash report ===\n";
+	r += fmt::format("version: {}\n", KYTY_GIT_VERSION);
+	r += fmt::format("thread:  {}\n", thread_name);
+	r += fmt::format("type={} code={} pc=0x{:016x} access={} addr=0x{:016x}\n",
+	                 static_cast<unsigned>(info.type), info.native_code, info.exception_address,
+	                 static_cast<unsigned>(info.access_violation_type), info.access_violation_vaddr);
+	r += fmt::format("rax={:016x} rbx={:016x} rcx={:016x} rdx={:016x}\n"
+	                 "rsi={:016x} rdi={:016x} rbp={:016x} rsp={:016x}\n"
+	                 "r8 ={:016x} r9 ={:016x} r10={:016x} r11={:016x}\n"
+	                 "r12={:016x} r13={:016x} r14={:016x} r15={:016x}\n",
+	                 info.rax, info.rbx, info.rcx, info.rdx, info.rsi, info.rdi, info.rbp, info.rsp,
+	                 info.r8, info.r9, info.r10, info.r11, info.r12, info.r13, info.r14, info.r15);
+	if (IsReadableRange(info.exception_address - 48, 96)) {
+		const auto* code = reinterpret_cast<const uint8_t*>(info.exception_address - 48);
+		r += "code (pc-48 .. pc+48, fault at byte 48):";
+		for (int i = 0; i < 96; i++) {
+			r += fmt::format("{}{:02x}", (i % 16 == 0) ? "\n " : " ", code[i]);
+		}
+		r += "\n";
+	}
+	if (IsReadableRange(info.rsp, 32 * sizeof(uint64_t))) {
+		const auto* stack = reinterpret_cast<const uint64_t*>(info.rsp);
+		r += "stack:";
+		for (int i = 0; i < 32; i++) {
+			r += fmt::format("{}{:016x}", (i % 4 == 0) ? "\n " : " ", stack[i]);
+		}
+		r += "\n";
+	}
+	r += "modules (base / size / name; * contains pc):\n";
+	for (const auto* program: m_programs) {
+		if (program == nullptr) {
+			continue;
+		}
+		const bool here = info.exception_address >= program->base_vaddr &&
+		                  info.exception_address < program->base_vaddr + program->base_size;
+		r += fmt::format("  {}0x{:016x} 0x{:08x} {}\n", here ? "* " : "  ", program->base_vaddr,
+		                 program->base_size, program->file_name.filename().string());
+	}
+
+	// Timestamped standalone report file next to the session log.
+	const auto now  = std::chrono::system_clock::now();
+	const auto time = std::chrono::system_clock::to_time_t(now);
+	std::tm    tm {};
+#if defined(_WIN32)
+	localtime_s(&tm, &time);
+#else
+	localtime_r(&time, &tm);
+#endif
+	char stamp[32];
+	std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tm);
+	const auto path = std::filesystem::path("_Logs") / ("crash_" + std::string(stamp) + ".txt");
+	std::error_code ec;
+	std::filesystem::create_directories(path.parent_path(), ec);
+	if (std::FILE* file = std::fopen(path.string().c_str(), "wb"); file != nullptr) {
+		std::fwrite(r.data(), 1, r.size(), file);
+		std::fclose(file);
+	}
+
+	// Mirror to the structured log: a concise marker (pointing at the file) plus the full body.
+	KLOGC(Log::Category::Crash, "fatal fault pc=0x%016llx addr=0x%016llx thread=%s -> %s",
+	      static_cast<unsigned long long>(info.exception_address),
+	      static_cast<unsigned long long>(info.access_violation_vaddr), thread_name,
+	      path.string().c_str());
+	Log::Message(Log::Level::Critical, Log::Category::Crash, r);
+	Log::FlushStructured();
+	std::printf("%s", r.c_str());
+	std::fflush(stdout);
+}
+
 bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exception_info) {
 	const auto* info = &exception_info;
 
@@ -660,42 +744,8 @@ bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exception_
 			return true;
 		}
 	}
-	// Report whatever guest context can be read safely before terminating: which guest thread
-	// faulted, the register file, the faulting code bytes and the top of its stack.
-	{
-		char thread_name[64] = "(host thread)";
-		if (auto self = Libs::LibKernel::PthreadSelfOrNull(); self != nullptr) {
-			if (Libs::LibKernel::PthreadGetname(self, thread_name) != 0) {
-				std::snprintf(thread_name, sizeof(thread_name), "(unnamed guest thread)");
-			}
-		}
-		std::printf("--- Guest fault context ---\n");
-		std::printf("thread: %s\n", thread_name);
-		std::printf("rax=%016" PRIx64 " rbx=%016" PRIx64 " rcx=%016" PRIx64 " rdx=%016" PRIx64 "\n"
-		            "rsi=%016" PRIx64 " rdi=%016" PRIx64 " rbp=%016" PRIx64 " rsp=%016" PRIx64 "\n"
-		            "r8 =%016" PRIx64 " r9 =%016" PRIx64 " r10=%016" PRIx64 " r11=%016" PRIx64 "\n"
-		            "r12=%016" PRIx64 " r13=%016" PRIx64 " r14=%016" PRIx64 " r15=%016" PRIx64 "\n",
-		            info->rax, info->rbx, info->rcx, info->rdx, info->rsi, info->rdi, info->rbp,
-		            info->rsp, info->r8, info->r9, info->r10, info->r11, info->r12, info->r13,
-		            info->r14, info->r15);
-		if (IsReadableRange(info->exception_address - 48, 96)) {
-			const auto* code = reinterpret_cast<const uint8_t*>(info->exception_address - 48);
-			std::printf("code (pc-48 .. pc+48, fault at byte 48):");
-			for (int i = 0; i < 96; i++) {
-				std::printf("%s%02x", (i % 16 == 0) ? "\n " : " ", code[i]);
-			}
-			std::printf("\n");
-		}
-		if (IsReadableRange(info->rsp, 32 * sizeof(uint64_t))) {
-			const auto* stack = reinterpret_cast<const uint64_t*>(info->rsp);
-			std::printf("stack:");
-			for (int i = 0; i < 32; i++) {
-				std::printf("%s %016" PRIx64, (i % 4 == 0) ? "\n " : "", stack[i]);
-			}
-			std::printf("\n");
-		}
-		std::fflush(stdout);
-	}
+	// Write a full crash report (standalone file + structured log + console) before terminating.
+	Common::Singleton<RuntimeLinker>::Instance()->WriteCrashReport(*info);
 	EXIT("Unhandled host exception: type=%u code=%u pc=0x%016" PRIx64
 	     " access=%u address=0x%016" PRIx64 "\n",
 	     static_cast<unsigned>(info->type), info->native_code, info->exception_address,

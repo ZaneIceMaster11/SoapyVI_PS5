@@ -168,6 +168,10 @@ public:
 
 	void StackTrace(uint64_t frame_ptr, uint64_t stack_ptr);
 
+	// Writes a standalone crash report for a fatal fault (regs, code, stack, loaded modules) to
+	// _Logs/crash_<timestamp>.txt, mirrors it to the structured log, and echoes it to the console.
+	void WriteCrashReport(const Common::HostException::ExceptionInfo& info);
+
 private:
 	static void LoadProgramToMemory(Program* program);
 	static void ParseProgramDynamicInfo(Program* program);
